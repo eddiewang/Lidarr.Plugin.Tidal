@@ -13,7 +13,7 @@ internal static class LidarrExtensions
             LogResponseContent = true,
             SuppressHttpError = true
         };
-        return builder.SetHeader("X-Tidal-Token", Globals.CLIENT_ID);
+        return builder;
     }
 
     public static HttpResponse ProcessRequest(this IHttpClient self, HttpRequestBuilder requestBuilder)
