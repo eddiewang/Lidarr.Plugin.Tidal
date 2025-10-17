@@ -27,10 +27,6 @@
 		<SourceFile>$(SolutionDir)../ext/Lidarr/src/Directory.Build.props</SourceFile>
 		<BackupFile>$(SourceFile).bak</BackupFile>
 	</PropertyGroup>
-	
-	<PropertyGroup>
-		<NoWarn>$(NoWarn);NU1902</NoWarn>
-	</PropertyGroup>
 
 	<Target Condition="'$(Configuration)' == 'Debug'" Name="PostBuild" AfterTargets="ILRepacker">
 		<Exec ContinueOnError="true" Command="COPY &quot;$(TargetPath)&quot; &quot;C:\ProgramData\Lidarr\plugins\TrevTV\Lidarr.Plugin.Tidal&quot;" />
