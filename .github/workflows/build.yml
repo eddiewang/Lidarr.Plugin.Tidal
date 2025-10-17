@@ -18,7 +18,7 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
   PLUGIN_NAME: Lidarr.Plugin.Tidal
   PLUGIN_VERSION: 10.0.1.${{ github.run_number }}
-  MINIMUM_LIDARR_VERSION: 2.14.5.4824
+  MINIMUM_LIDARR_VERSION: 2.13.0.4664
   DOTNET_VERSION: 8.0.404
 
 jobs:
@@ -53,7 +53,7 @@ jobs:
       - name: Build
         run: |
           dotnet restore src/*.sln /p:WarningsNotAsErrors="NU1902"
-          dotnet build src/*.sln -c Release -f ${{ matrix.framework }}
+          dotnet build src/*.sln /p:WarningsNotAsErrors="NU1902" -c Release -f ${{ matrix.framework }}
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
