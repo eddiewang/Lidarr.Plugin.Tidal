@@ -4,7 +4,7 @@ on:
     branches:
       - main
     tags-ignore:
-      - '**'
+      - "**"
   pull_request:
   workflow_dispatch:
 
@@ -25,8 +25,8 @@ jobs:
   build:
     strategy:
       matrix:
-        framework: [ net8.0 ]
-    runs-on: ubuntu-latest
+        framework: [net8.0]
+    runs-on: tenki-standard-large-8c-16g
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,3 +83,4 @@ jobs:
           prerelease: false
           files: |
             ${{ env.PLUGIN_NAME }}.net8.0.zip
+
