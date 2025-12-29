@@ -57,6 +57,7 @@ public class TidalUser
 
     [JsonProperty("Data")]
     private OAuthTokenData _data;
+    [JsonProperty("SessionInfo")]
     private SessionInfo? _sessionInfo;
 
     [JsonProperty("ExpirationDate")]

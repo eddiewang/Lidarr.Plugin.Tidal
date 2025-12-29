@@ -129,7 +129,10 @@ public class API
             {
                 bool refreshed = await _session.AttemptTokenRefresh(_activeUser, token);
                 if (refreshed)
+                {
+                    await _activeUser.GetSession(this, token);
                     return await Call(method, path, formParameters, urlParameters, headers, baseUrl, token);
+                }
             }
         }
 
