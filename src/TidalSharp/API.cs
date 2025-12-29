@@ -131,7 +131,8 @@ public class API
                 if (refreshed)
                 {
                     await _activeUser.GetSession(this, token);
-                    return await Call(method, path, formParameters, urlParameters, headers, baseUrl, token);
+                    // Pass null for urlParameters and headers so they get re-populated with fresh session info
+                    return await Call(method, path, formParameters, null, null, baseUrl, token);
                 }
             }
         }
