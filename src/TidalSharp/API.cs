@@ -19,6 +19,8 @@ public class API
     private IHttpClient _httpClient;
     private Session _session;
     private TidalUser? _activeUser;
+    private readonly SemaphoreSlim _tokenRefreshLock = new(1, 1);
+    private DateTime _lastTokenRefresh = DateTime.MinValue;
 
     public async Task<JObject> GetTrack(string id, CancellationToken token = default) => await Call(HttpMethod.Get, $"tracks/{id}", token: token);
     public async Task<TidalLyrics?> GetTrackLyrics(string id, CancellationToken token = default)
@@ -127,12 +129,29 @@ public class API
             string? userMessage = json.GetValue("userMessage")?.ToString();
             if (userMessage != null && userMessage.Contains("The token has expired."))
             {
-                bool refreshed = await _session.AttemptTokenRefresh(_activeUser, token);
-                if (refreshed)
+                // Use semaphore to prevent concurrent token refreshes
+                await _tokenRefreshLock.WaitAsync(token);
+                try
                 {
-                    await _activeUser.GetSession(this, token);
-                    // Pass null for urlParameters and headers so they get re-populated with fresh session info
-                    return await Call(method, path, formParameters, null, null, baseUrl, token);
+                    // Check if another thread already refreshed the token recently
+                    if ((DateTime.UtcNow - _lastTokenRefresh).TotalSeconds < 30)
+                    {
+                        // Token was recently refreshed, just retry with fresh session info
+                        return await Call(method, path, formParameters, null, null, baseUrl, token);
+                    }
+
+                    bool refreshed = await _session.AttemptTokenRefresh(_activeUser, token);
+                    if (refreshed)
+                    {
+                        await _activeUser.GetSession(this, token);
+                        _lastTokenRefresh = DateTime.UtcNow;
+                        // Pass null for urlParameters and headers so they get re-populated with fresh session info
+                        return await Call(method, path, formParameters, null, null, baseUrl, token);
+                    }
+                }
+                finally
+                {
+                    _tokenRefreshLock.Release();
                 }
             }
         }
