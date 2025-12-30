@@ -20,6 +20,7 @@ public class API
     private Session _session;
     private TidalUser? _activeUser;
     private readonly SemaphoreSlim _tokenRefreshLock = new(1, 1);
+    private readonly SemaphoreSlim _sessionInfoLock = new(1, 1);
     private DateTime _lastTokenRefresh = DateTime.MinValue;
 
     public async Task<JObject> GetTrack(string id, CancellationToken token = default) => await Call(HttpMethod.Get, $"tracks/{id}", token: token);
@@ -86,18 +87,31 @@ public class API
     {
         // currently the method is ignored, but that doesn't matter much since it's all GET
 
+        // Wait if a token refresh is in progress (except for the "sessions" endpoint which is used during refresh)
+        if (path != "sessions" && _tokenRefreshLock.CurrentCount == 0)
+        {
+            await _tokenRefreshLock.WaitAsync(token);
+            _tokenRefreshLock.Release();
+        }
+
+        var activeUser = _activeUser;
+        if (path != "sessions")
+        {
+            activeUser = await EnsureSessionInfo(activeUser, token);
+        }
+
         baseUrl ??= Globals.API_V1_LOCATION;
 
         var request = _httpClient.BuildRequest(baseUrl).Resource(path);
 
         headers ??= [];
         urlParameters ??= [];
-        urlParameters["sessionId"] = _activeUser?.SessionID ?? "";
-        urlParameters["countryCode"] = _activeUser?.CountryCode ?? "";
+        urlParameters["sessionId"] = activeUser?.SessionID ?? "";
+        urlParameters["countryCode"] = activeUser?.CountryCode ?? "";
         urlParameters["limit"] = _session.ItemLimit.ToString();
 
-        if (_activeUser != null)
-            headers["Authorization"] = $"{_activeUser.TokenType} {_activeUser.AccessToken}";
+        if (activeUser != null)
+            headers["Authorization"] = $"{activeUser.TokenType} {activeUser.AccessToken}";
 
         foreach (var param in urlParameters)
             request = request.AddQueryParam(param.Key, param.Value, true);
@@ -183,6 +197,40 @@ public class API
         }
 
         return json;
+    }
+
+    private async Task<TidalUser?> EnsureSessionInfo(TidalUser? activeUser, CancellationToken token)
+    {
+        if (activeUser == null)
+            return null;
+
+        if (!string.IsNullOrEmpty(activeUser.CountryCode) && !string.IsNullOrEmpty(activeUser.SessionID))
+            return activeUser;
+
+        await _sessionInfoLock.WaitAsync(token);
+        try
+        {
+            activeUser = _activeUser;
+            if (activeUser == null)
+                return null;
+
+            if (!string.IsNullOrEmpty(activeUser.CountryCode) && !string.IsNullOrEmpty(activeUser.SessionID))
+                return activeUser;
+
+            // If a token refresh is in progress, wait for it to finish to avoid fetching a session with stale auth.
+            if (_tokenRefreshLock.CurrentCount == 0)
+            {
+                await _tokenRefreshLock.WaitAsync(token);
+                _tokenRefreshLock.Release();
+            }
+
+            await activeUser.GetSession(this, token);
+            return activeUser;
+        }
+        finally
+        {
+            _sessionInfoLock.Release();
+        }
     }
 
     public static string CompleteTitleFromPage(JToken page)
