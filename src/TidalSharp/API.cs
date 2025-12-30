@@ -143,6 +143,8 @@ public class API
             string? userMessage = json.GetValue("userMessage")?.ToString();
             if (userMessage != null && userMessage.Contains("The token has expired."))
             {
+                bool shouldRetry = false;
+
                 // Use semaphore to prevent concurrent token refreshes
                 await _tokenRefreshLock.WaitAsync(token);
                 try
@@ -150,22 +152,28 @@ public class API
                     // Check if another thread already refreshed the token recently
                     if ((DateTime.UtcNow - _lastTokenRefresh).TotalSeconds < 30)
                     {
-                        // Token was recently refreshed, just retry with fresh session info
-                        return await Call(method, path, formParameters, null, null, baseUrl, token);
+                        shouldRetry = true;
                     }
-
-                    bool refreshed = await _session.AttemptTokenRefresh(_activeUser, token);
-                    if (refreshed)
+                    else
                     {
-                        await _activeUser.GetSession(this, token);
-                        _lastTokenRefresh = DateTime.UtcNow;
-                        // Pass null for urlParameters and headers so they get re-populated with fresh session info
-                        return await Call(method, path, formParameters, null, null, baseUrl, token);
+                        bool refreshed = await _session.AttemptTokenRefresh(_activeUser, token);
+                        if (refreshed)
+                        {
+                            await _activeUser.GetSession(this, token);
+                            _lastTokenRefresh = DateTime.UtcNow;
+                            shouldRetry = true;
+                        }
                     }
                 }
                 finally
                 {
                     _tokenRefreshLock.Release();
+                }
+
+                if (shouldRetry)
+                {
+                    // Pass null for urlParameters and headers so they get re-populated with fresh session info
+                    return await Call(method, path, formParameters, null, null, baseUrl, token);
                 }
             }
         }
