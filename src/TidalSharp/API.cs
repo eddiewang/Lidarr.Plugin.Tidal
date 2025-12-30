@@ -1,6 +1,6 @@
 using Newtonsoft.Json.Linq;
+using NLog;
 using NzbDrone.Common.Http;
-using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using TidalSharp.Data;
@@ -10,6 +10,9 @@ namespace TidalSharp;
 
 public class API
 {
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+    private static readonly TimeSpan LockWaitWarningInterval = TimeSpan.FromSeconds(30);
+
     internal API(IHttpClient client, Session session)
     {
         _httpClient = client;
@@ -90,7 +93,8 @@ public class API
         // Wait if a token refresh is in progress (except for the "sessions" endpoint which is used during refresh)
         if (path != "sessions" && _tokenRefreshLock.CurrentCount == 0)
         {
-            await _tokenRefreshLock.WaitAsync(token);
+            Logger.Debug("Waiting for token refresh lock before {Path}", path);
+            await WaitForSemaphore(_tokenRefreshLock, $"token refresh lock before {path}", token);
             _tokenRefreshLock.Release();
         }
 
@@ -144,22 +148,35 @@ public class API
             if (userMessage != null && userMessage.Contains("The token has expired."))
             {
                 bool shouldRetry = false;
+                var refreshUser = _activeUser;
+                if (refreshUser != null)
+                {
+                    Logger.Info("Token expired; attempting refresh for user {UserId}", refreshUser.UserId);
+                }
 
                 // Use semaphore to prevent concurrent token refreshes
-                await _tokenRefreshLock.WaitAsync(token);
+                await WaitForSemaphore(_tokenRefreshLock, "token refresh lock", token);
                 try
                 {
                     // Check if another thread already refreshed the token recently
                     if ((DateTime.UtcNow - _lastTokenRefresh).TotalSeconds < 30)
                     {
+                        Logger.Info("Token already refreshed recently; retrying request");
                         shouldRetry = true;
                     }
                     else
                     {
+                        var refreshStart = DateTime.UtcNow;
                         bool refreshed = await _session.AttemptTokenRefresh(_activeUser, token);
+                        Logger.Info("Token refresh {Result} in {ElapsedMs}ms",
+                            refreshed ? "succeeded" : "failed",
+                            (DateTime.UtcNow - refreshStart).TotalMilliseconds);
                         if (refreshed)
                         {
                             await _activeUser.GetSession(this, token);
+                            Logger.Info("Session refreshed after token refresh. CountryCode={CountryCode} SessionIdPresent={HasSessionId}",
+                                _activeUser.CountryCode,
+                                !string.IsNullOrEmpty(_activeUser.SessionID));
                             _lastTokenRefresh = DateTime.UtcNow;
                             shouldRetry = true;
                         }
@@ -215,7 +232,8 @@ public class API
         if (!string.IsNullOrEmpty(activeUser.CountryCode) && !string.IsNullOrEmpty(activeUser.SessionID))
             return activeUser;
 
-        await _sessionInfoLock.WaitAsync(token);
+        Logger.Info("Session info missing; fetching session info for user {UserId}", activeUser.UserId);
+        await WaitForSemaphore(_sessionInfoLock, "session info lock", token);
         try
         {
             activeUser = _activeUser;
@@ -228,16 +246,30 @@ public class API
             // If a token refresh is in progress, wait for it to finish to avoid fetching a session with stale auth.
             if (_tokenRefreshLock.CurrentCount == 0)
             {
-                await _tokenRefreshLock.WaitAsync(token);
+                Logger.Debug("Waiting for token refresh lock before fetching session info");
+                await WaitForSemaphore(_tokenRefreshLock, "token refresh lock before session info fetch", token);
                 _tokenRefreshLock.Release();
             }
 
             await activeUser.GetSession(this, token);
+            Logger.Info("Session info updated. CountryCode={CountryCode} SessionIdPresent={HasSessionId}",
+                activeUser.CountryCode,
+                !string.IsNullOrEmpty(activeUser.SessionID));
             return activeUser;
         }
         finally
         {
             _sessionInfoLock.Release();
+        }
+    }
+
+    private static async Task WaitForSemaphore(SemaphoreSlim semaphore, string context, CancellationToken token)
+    {
+        var start = DateTime.UtcNow;
+        while (!await semaphore.WaitAsync(LockWaitWarningInterval, token))
+        {
+            var waited = DateTime.UtcNow - start;
+            Logger.Warn("Still waiting {WaitSeconds:0}s for {Context}", waited.TotalSeconds, context);
         }
     }
 
